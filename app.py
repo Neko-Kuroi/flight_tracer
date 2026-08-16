@@ -1,9 +1,14 @@
+import os
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from FlightRadarAPI import FlightRadar24API
 from functools import wraps
 
-app = Flask(__name__, static_folder='.', static_url_path='')
+# app.pyのあるディレクトリを基準にする(実行時のカレントディレクトリに依存させない)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+INDEX_PATH = os.path.join(BASE_DIR, 'index.html')
+
+app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
 CORS(app)
 fr_api = FlightRadar24API()
 
@@ -11,6 +16,12 @@ fr_api = FlightRadar24API()
 @app.route('/')
 def index():
     """index.htmlをルートで配信(app.pyと同じディレクトリに置く前提)"""
+    if not os.path.exists(INDEX_PATH):
+        return (
+            f"index.html が見つかりません: {INDEX_PATH}<br>"
+            f"app.py と index.html を同じディレクトリに置いてください。",
+            500,
+        )
     return app.send_static_file('index.html')
 
 # デフォルトbounds: 北, 西, 南, 東(日本周辺)
@@ -133,4 +144,6 @@ def get_flight_details(flight_id):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    print(f"[起動確認] app.py の場所: {BASE_DIR}")
+    print(f"[起動確認] index.html の場所: {INDEX_PATH} (存在: {os.path.exists(INDEX_PATH)})")
+    app.run(host='0.0.0.0', debug=True, port=5000)
