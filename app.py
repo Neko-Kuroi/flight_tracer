@@ -5,21 +5,43 @@ from FlightRadarAPI import FlightRadar24API
 from functools import wraps
 
 # app.pyのあるディレクトリを基準にする(実行時のカレントディレクトリに依存させない)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-INDEX_PATH = os.path.join(BASE_DIR, 'index.html')
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
+# index.htmlの置き場所として考えられる候補を順に探す
+# (フラット構成: app.pyと同じ階層 / 分離構成: backend/app.py + frontend/index.html の両方に対応)
+CANDIDATE_DIRS = [
+    SCRIPT_DIR,                                          # app.pyと同じディレクトリ
+    os.path.join(SCRIPT_DIR, '..', 'frontend'),          # backend/app.py から見た ../frontend
+    os.path.join(SCRIPT_DIR, 'frontend'),                # app.py から見た ./frontend
+]
+
+
+def find_static_dir():
+    """index.htmlが実在するディレクトリを候補から探す。見つからなければNone"""
+    for d in CANDIDATE_DIRS:
+        d_abs = os.path.abspath(d)
+        if os.path.isdir(d_abs) and os.path.exists(os.path.join(d_abs, 'index.html')):
+            return d_abs
+    return None
+
+
+STATIC_DIR = find_static_dir()
+
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='')
 CORS(app)
 fr_api = FlightRadar24API()
 
 
 @app.route('/')
 def index():
-    """index.htmlをルートで配信(app.pyと同じディレクトリに置く前提)"""
-    if not os.path.exists(INDEX_PATH):
+    """index.htmlをルートで配信"""
+    if STATIC_DIR is None:
+        tried = "\n".join(f"- {os.path.abspath(d)}" for d in CANDIDATE_DIRS)
         return (
-            f"index.html が見つかりません: {INDEX_PATH}<br>"
-            f"app.py と index.html を同じディレクトリに置いてください。",
+            "<pre>index.html が見つかりません。以下の場所を探しましたが存在しませんでした:\n"
+            f"{tried}\n\n"
+            "app.py と index.html を同じディレクトリに置くか、\n"
+            "backend/app.py + frontend/index.html の構成にしてください。</pre>",
             500,
         )
     return app.send_static_file('index.html')
@@ -144,6 +166,10 @@ def get_flight_details(flight_id):
 
 
 if __name__ == '__main__':
-    print(f"[起動確認] app.py の場所: {BASE_DIR}")
-    print(f"[起動確認] index.html の場所: {INDEX_PATH} (存在: {os.path.exists(INDEX_PATH)})")
+    print(f"[起動確認] app.py の場所: {SCRIPT_DIR}")
+    print(f"[起動確認] static_folder: {STATIC_DIR}")
+    if STATIC_DIR:
+        print(f"[起動確認] index.html: 存在します ({os.path.join(STATIC_DIR, 'index.html')})")
+    else:
+        print("[起動確認] index.html: 見つかりませんでした")
     app.run(host='0.0.0.0', debug=True, port=5000)
