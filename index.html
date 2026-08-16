@@ -137,6 +137,11 @@
             margin: 8px 0;
             font-size: 14px;
         }
+        .flight-popup .icao-info {
+            font-size: 11px;
+            color: #888;
+            margin-top: 6px;
+        }
         .flight-popup .loading-note {
             color: #999;
             font-size: 11px;
@@ -176,6 +181,7 @@
 
         const API_BASE = '/api';
         const flightMarkers = {};
+        const trailPolylines = {}; // { flightId: L.Polyline }
         let allFlights = [];
 
         // === ウォッチリスト ===
@@ -281,7 +287,6 @@
         // === bounds(地図の表示範囲)取得 ===
         function getCurrentBoundsParam() {
             const b = map.getBounds();
-            // バックエンドの順序: tl_y(北), tl_x(西), br_y(南), br_x(東)
             const tl_y = b.getNorth();
             const tl_x = b.getWest();
             const br_y = b.getSouth();
@@ -325,6 +330,10 @@
         }
 
         function buildPopupContent(flight, loading = false) {
+            const icaoInfo = flight.origin_icao && flight.destination_icao
+                ? `<p class="icao-info">ICAO: ${flight.origin_icao} → ${flight.destination_icao}</p>`
+                : '';
+
             return `
                 <div class="flight-popup">
                     <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
@@ -335,9 +344,39 @@
                     <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
                     <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
                     <p><strong>方位:</strong> ${flight.heading || 0}°</p>
+                    ${icaoInfo}
                     ${loading ? '<p class="loading-note">詳細情報を取得中...</p>' : ''}
                 </div>
             `;
+        }
+
+        // === 航跡(ポリライン)描画 ===
+        function drawTrail(flightId, trailPoints) {
+            removeTrail(flightId);
+
+            if (!trailPoints || trailPoints.length < 2) return;
+
+            const latlngs = trailPoints
+                .filter(p => p.lat != null && p.lng != null)
+                .map(p => [p.lat, p.lng]);
+
+            if (latlngs.length < 2) return;
+
+            const polyline = L.polyline(latlngs, {
+                color: '#1a73e8',
+                weight: 3,
+                opacity: 0.7,
+                dashArray: '6, 6'
+            }).addTo(map);
+
+            trailPolylines[flightId] = polyline;
+        }
+
+        function removeTrail(flightId) {
+            if (trailPolylines[flightId]) {
+                map.removeLayer(trailPolylines[flightId]);
+                delete trailPolylines[flightId];
+            }
         }
 
         async function loadFlightDetails(flightId, marker) {
@@ -347,9 +386,9 @@
                 if (!response.ok) return; // 失敗時は基本情報のまま(フォールバック)
                 const detail = await response.json();
                 marker.setPopupContent(buildPopupContent(detail));
+                drawTrail(flightId, detail.trail);
             } catch (error) {
                 console.error('詳細取得エラー:', error);
-                // フォールバック: 基本情報のまま維持
             }
         }
 
@@ -359,6 +398,7 @@
                 if (!currentIds.has(id)) {
                     map.removeLayer(flightMarkers[id]);
                     delete flightMarkers[id];
+                    removeTrail(id);
                 }
             }
             flights.forEach(flight => {
@@ -367,17 +407,19 @@
                 if (flightMarkers[flight.id]) {
                     flightMarkers[flight.id].setLatLng(pos);
                     flightMarkers[flight.id].setIcon(createPlaneIcon(heading));
-                    // 基本情報だけ随時更新(詳細は開いたときのみ再取得)
                     flightMarkers[flight.id]._basicFlight = flight;
                 } else {
                     const marker = L.marker(pos, { icon: createPlaneIcon(heading) }).addTo(map);
                     marker._basicFlight = flight;
                     marker.bindPopup(buildPopupContent(flight));
 
-                    // ポップアップを開いたタイミングで詳細取得
                     marker.on('popupopen', () => {
                         marker.setPopupContent(buildPopupContent(marker._basicFlight, true));
                         loadFlightDetails(flight.id, marker);
+                    });
+
+                    marker.on('popupclose', () => {
+                        removeTrail(flight.id);
                     });
 
                     flightMarkers[flight.id] = marker;

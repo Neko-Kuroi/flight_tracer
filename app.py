@@ -1,4 +1,5 @@
 import os
+import json
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from FlightRadarAPI import FlightRadar24API
@@ -8,7 +9,6 @@ from functools import wraps
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # index.htmlの置き場所として考えられる候補を順に探す
-# (フラット構成: app.pyと同じ階層 / 分離構成: backend/app.py + frontend/index.html の両方に対応)
 CANDIDATE_DIRS = [
     SCRIPT_DIR,                                          # app.pyと同じディレクトリ
     os.path.join(SCRIPT_DIR, '..', 'frontend'),          # backend/app.py から見た ../frontend
@@ -46,6 +46,7 @@ def index():
         )
     return app.send_static_file('index.html')
 
+
 # デフォルトbounds: 北, 西, 南, 東(日本周辺)
 DEFAULT_BOUNDS = "46.0,122.0,24.0,146.0"
 
@@ -75,6 +76,17 @@ def parse_bounds(bounds_str):
     return tl_y, tl_x, br_y, br_x
 
 
+def validate_bounds_area(tl_y, tl_x, br_y, br_x):
+    """面積が大きすぎる場合はエラーレスポンス(Flaskの(body, status)タプル)を返す。問題なければNone"""
+    area = abs(tl_y - br_y) * abs(tl_x - br_x)
+    if area > MAX_BOUNDS_AREA:
+        return jsonify({
+            'error': 'bounds_too_large',
+            'detail': f'表示範囲が広すぎます(area={area:.1f})。ズームインしてください'
+        }), 400
+    return None
+
+
 def serialize_flight_basic(flight):
     """get_flights()直後の基本属性のみ(IATA/ICAOコードは含まれる。フルネームは未取得)"""
     return {
@@ -93,9 +105,13 @@ def serialize_flight_basic(flight):
     }
 
 
-def serialize_flight_detailed(flight):
-    """set_flight_details()実行後、フルネーム込み(取れなければコードにフォールバック)"""
-    return {
+def serialize_flight_detailed(flight, raw_details=None):
+    """
+    set_flight_details()実行後の情報 + 生のdetails辞書からICAOコード・航跡を追加。
+    実機確認済み(2026-XX-XX): airport.origin/destination.code.icao、trail[].lat/lng/alt/ts
+    のキー構造は実データと一致することを確認済み。
+    """
+    result = {
         'id': flight.id,
         'callsign': flight.callsign or getattr(flight, 'number', '') or '',
         'airline': getattr(flight, 'airline_name', None) or flight.airline_icao or 'Unknown',
@@ -108,7 +124,32 @@ def serialize_flight_detailed(flight):
         'altitude': flight.altitude,
         'speed': flight.ground_speed,
         'heading': flight.heading or 0,
+        'origin_icao': None,
+        'destination_icao': None,
+        'trail': [],
     }
+
+    if raw_details:
+        airport = raw_details.get('airport', {}) or {}
+        origin = airport.get('origin') or {}
+        destination = airport.get('destination') or {}
+        result['origin_icao'] = (origin.get('code') or {}).get('icao')
+        result['destination_icao'] = (destination.get('code') or {}).get('icao')
+
+        # 実機確認: trailは新しい順(降順)で返る。ts昇順(古い→新しい)にソートしてから渡す
+        trail_raw = raw_details.get('trail', []) or []
+        trail_sorted = sorted(trail_raw, key=lambda p: p.get('ts', 0))
+        result['trail'] = [
+            {
+                'lat': p.get('lat'),
+                'lng': p.get('lng'),
+                'alt': p.get('alt'),
+                'ts': p.get('ts'),
+            }
+            for p in trail_sorted
+        ]
+
+    return result
 
 
 @app.route('/api/flights')
@@ -121,12 +162,9 @@ def get_flights():
     except ValueError as e:
         return jsonify({'error': 'invalid_bounds', 'detail': str(e)}), 400
 
-    area = abs(tl_y - br_y) * abs(tl_x - br_x)
-    if area > MAX_BOUNDS_AREA:
-        return jsonify({
-            'error': 'bounds_too_large',
-            'detail': f'表示範囲が広すぎます(area={area:.1f})。ズームインしてください'
-        }), 400
+    area_error = validate_bounds_area(tl_y, tl_x, br_y, br_x)
+    if area_error:
+        return area_error
 
     bounds_obj = fr_api.get_bounds({
         "tl_y": tl_y, "tl_x": tl_x,
@@ -149,6 +187,10 @@ def get_flight_details(flight_id):
     except ValueError as e:
         return jsonify({'error': 'invalid_bounds', 'detail': str(e)}), 400
 
+    area_error = validate_bounds_area(tl_y, tl_x, br_y, br_x)
+    if area_error:
+        return area_error
+
     bounds_obj = fr_api.get_bounds({
         "tl_y": tl_y, "tl_x": tl_x,
         "br_y": br_y, "br_x": br_x
@@ -159,10 +201,10 @@ def get_flight_details(flight_id):
     if target is None:
         return jsonify({'error': 'Flight not found in current bounds'}), 404
 
-    details = fr_api.get_flight_details(target)
-    target.set_flight_details(details)
+    raw_details = fr_api.get_flight_details(target)
+    target.set_flight_details(raw_details)
 
-    return jsonify(serialize_flight_detailed(target))
+    return jsonify(serialize_flight_detailed(target, raw_details))
 
 
 if __name__ == '__main__':
