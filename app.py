@@ -17,7 +17,8 @@ def index():
 DEFAULT_BOUNDS = "46.0,122.0,24.0,146.0"
 
 # 広域取得防止用の面積上限(緯度差 × 経度差の目安値)
-MAX_BOUNDS_AREA = 40.0
+# DEFAULT_BOUNDS(日本周辺)の面積 = |46-24| × |146-122| = 528 を下回らない値にする
+MAX_BOUNDS_AREA = 600.0
 
 
 def handle_fr_errors(f):
