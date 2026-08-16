@@ -155,6 +155,18 @@
 <body>
     <div id="map"></div>
     <div id="controls">
+        <select id="region-select" onchange="jumpToRegion(this.value)" style="width:100%; padding:8px; margin-bottom:8px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
+            <option value="japan">🇯🇵 日本</option>
+            <option value="us_west">🇺🇸 アメリカ西海岸</option>
+            <option value="us_east">🇺🇸 アメリカ東海岸</option>
+            <option value="south_america">🇧🇷 南米(ブラジル・アルゼンチン)</option>
+            <option value="europe">🇪🇺 西ヨーロッパ</option>
+            <option value="middle_east">🌍 中東</option>
+            <option value="africa_north">🇪🇬 北アフリカ</option>
+            <option value="africa_south">🇿🇦 南部アフリカ</option>
+            <option value="east_asia">🌏 東アジア</option>
+            <option value="oceania">🇦🇺 オセアニア</option>
+        </select>
         <input type="text" id="search-box" placeholder="コールサイン・航空会社・機種で検索" oninput="filterFlights()">
 
         <div class="watch-input-row">
@@ -285,6 +297,20 @@
         }
 
         // === bounds(地図の表示範囲)取得 ===
+        function normalizeLng(lng) {
+            // -180〜180の範囲に正規化
+            return ((lng + 180) % 360 + 360) % 360 - 180;
+        }
+
+        function getCurrentBoundsParam() {
+            const b = map.getBounds();
+            const tl_y = b.getNorth();
+            const tl_x = normalizeLng(b.getWest());
+            const br_y = b.getSouth();
+            const br_x = normalizeLng(b.getEast());
+            return `${tl_y},${tl_x},${br_y},${br_x}`;
+        }
+        /*
         function getCurrentBoundsParam() {
             const b = map.getBounds();
             const tl_y = b.getNorth();
@@ -292,6 +318,27 @@
             const br_y = b.getSouth();
             const br_x = b.getEast();
             return `${tl_y},${tl_x},${br_y},${br_x}`;
+        }
+        */
+
+        const REGIONS = {
+            japan:         { tl_y: 46, tl_x: 122, br_y: 24, br_x: 146 },   // area=528
+            us_west:       { tl_y: 49, tl_x: -125, br_y: 32, br_x: -114 }, // area=187
+            us_east:       { tl_y: 47, tl_x: -85,  br_y: 25, br_x: -66 },  // area=418
+            south_america: { tl_y: -10, tl_x: -58, br_y: -35, br_x: -38 }, // area=500 (サンパウロ/リオ/ブエノスアイレス)
+            europe:        { tl_y: 55, tl_x: -5,   br_y: 36, br_x: 25 },   // area=570
+            middle_east:   { tl_y: 35, tl_x: 35,   br_y: 15, br_x: 58 },   // area=460
+            africa_north:  { tl_y: 33, tl_x: 25,   br_y: 15, br_x: 45 },   // area=360 (カイロ方面)
+            africa_south:  { tl_y: -15, tl_x: 15,  br_y: -35, br_x: 35 },  // area=400 (ヨハネスブルグ/ケープタウン方面)
+            east_asia:     { tl_y: 42, tl_x: 110,  br_y: 22, br_x: 130 },  // area=400
+            oceania:       { tl_y: -10, tl_x: 140, br_y: -38, br_x: 155 }, // area=420
+        };
+
+        function jumpToRegion(key) {
+            const r = REGIONS[key];
+            if (!r) return;
+            const bounds = L.latLngBounds([r.br_y, r.tl_x], [r.tl_y, r.br_x]);
+            map.fitBounds(bounds);
         }
 
         async function fetchFlights() {
