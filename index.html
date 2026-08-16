@@ -168,6 +168,11 @@
             <option value="oceania">🇦🇺 オセアニア</option>
         </select>
         <input type="text" id="search-box" placeholder="コールサイン・航空会社・機種で検索" oninput="filterFlights()">
+        
+        <div class="watch-input-row">
+            <input type="text" id="registration-search" placeholder="登録番号で検索 (例: N221EG)" onkeydown="if(event.key==='Enter')searchByRegistration()">
+            <button onclick="searchByRegistration()">🔍</button>
+        </div>
 
         <div class="watch-input-row">
             <input type="text" id="watch-input" placeholder="コールサイン/登録番号を監視" onkeydown="if(event.key==='Enter')addToWatchlist()">
@@ -333,7 +338,93 @@
             east_asia:     { tl_y: 42, tl_x: 110,  br_y: 22, br_x: 130 },  // area=400
             oceania:       { tl_y: -10, tl_x: 140, br_y: -38, br_x: 155 }, // area=420
         };
+        
+        const REGION_LABELS = {
+            japan: '日本', us_west: 'アメリカ西海岸', us_east: 'アメリカ東海岸',
+            south_america: '南米', europe: '西ヨーロッパ', middle_east: '中東',
+            africa_north: '北アフリカ', africa_south: '南部アフリカ',
+            east_asia: '東アジア', oceania: 'オセアニア'
+        };
 
+function findNearestRegion(lat, lng) {
+    let nearest = null;
+    let minDist = Infinity;
+    for (const [key, r] of Object.entries(REGIONS)) {
+        const centerLat = (r.tl_y + r.br_y) / 2;
+        const centerLng = (r.tl_x + r.br_x) / 2;
+        const dist = Math.sqrt((lat - centerLat) ** 2 + (lng - centerLng) ** 2);
+        if (dist < minDist) {
+            minDist = dist;
+            nearest = key;
+        }
+    }
+    return nearest;
+}
+
+async function searchByRegistration() {
+    const input = document.getElementById('registration-search');
+    const registration = input.value.trim().toUpperCase();
+    if (!registration) return;
+
+    showError('');
+    try {
+        const response = await fetch(`${API_BASE}/search?registration=${encodeURIComponent(registration)}`);
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+        }
+        const flight = await response.json();
+
+        map.setView([flight.lat, flight.lng], 8);
+
+        const nearestRegion = findNearestRegion(flight.lat, flight.lng);
+        const regionLabel = REGION_LABELS[nearestRegion] || '不明';
+
+        alert(`${registration} を検出しました(${flight.callsign || 'コールサイン不明'})\n最寄りリージョン: ${regionLabel}`);
+    } catch (error) {
+        console.error('登録番号検索エラー:', error);
+        showError(`検索失敗: ${error.message}`);
+    }
+}function findNearestRegion(lat, lng) {
+    let nearest = null;
+    let minDist = Infinity;
+    for (const [key, r] of Object.entries(REGIONS)) {
+        const centerLat = (r.tl_y + r.br_y) / 2;
+        const centerLng = (r.tl_x + r.br_x) / 2;
+        const dist = Math.sqrt((lat - centerLat) ** 2 + (lng - centerLng) ** 2);
+        if (dist < minDist) {
+            minDist = dist;
+            nearest = key;
+        }
+    }
+    return nearest;
+}
+
+async function searchByRegistration() {
+    const input = document.getElementById('registration-search');
+    const registration = input.value.trim().toUpperCase();
+    if (!registration) return;
+
+    showError('');
+    try {
+        const response = await fetch(`${API_BASE}/search?registration=${encodeURIComponent(registration)}`);
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+        }
+        const flight = await response.json();
+
+        map.setView([flight.lat, flight.lng], 8);
+
+        const nearestRegion = findNearestRegion(flight.lat, flight.lng);
+        const regionLabel = REGION_LABELS[nearestRegion] || '不明';
+
+        alert(`${registration} を検出しました(${flight.callsign || 'コールサイン不明'})\n最寄りリージョン: ${regionLabel}`);
+    } catch (error) {
+        console.error('登録番号検索エラー:', error);
+        showError(`検索失敗: ${error.message}`);
+    }
+}
         function jumpToRegion(key) {
             const r = REGIONS[key];
             if (!r) return;

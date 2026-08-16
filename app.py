@@ -206,6 +206,28 @@ def get_flight_details(flight_id):
 
     return jsonify(serialize_flight_detailed(target, raw_details))
 
+@app.route('/api/search')
+@handle_fr_errors
+def search_by_registration():
+    """
+    機体登録番号でグローバル検索(boundsを指定しない = 全世界対象)。
+    計測済み(2026-XX-XX): bounds限定検索より高速(0.038秒 / 1件)。
+    ただしユーザーの明示的な検索操作時のみ呼ぶこと。ポーリングには絶対に組み込まない。
+    """
+    registration = request.args.get('registration', '').strip().upper()
+    if not registration:
+        return jsonify({'error': 'registration parameter is required'}), 400
+
+    flights = fr_api.get_flights(registration=registration)
+
+    if not flights:
+        return jsonify({
+            'error': 'not_found',
+            'detail': f'{registration} は現在飛行中の機体として見つかりませんでした'
+        }), 404
+
+    target = flights[0]
+    return jsonify(serialize_flight_basic(target))
 
 if __name__ == '__main__':
     print(f"[起動確認] app.py の場所: {SCRIPT_DIR}")
