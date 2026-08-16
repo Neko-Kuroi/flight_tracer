@@ -9,7 +9,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
         #map { height: 100vh; width: 100%; }
-        
+
         #controls {
             position: absolute;
             top: 10px;
@@ -65,7 +65,7 @@
         #controls .error.visible {
             display: block;
         }
-        
+
         /* ウォッチリスト */
         .watch-input-row {
             display: flex;
@@ -117,7 +117,7 @@
         .watch-tag button:hover {
             opacity: 1;
         }
-        
+
         .flight-popup {
             min-width: 260px;
         }
@@ -137,6 +137,11 @@
             margin: 8px 0;
             font-size: 14px;
         }
+        .flight-popup .loading-note {
+            color: #999;
+            font-size: 11px;
+            margin-top: 6px;
+        }
         .flight-icon {
             filter: drop-shadow(1px 1px 2px rgba(0,0,0,0.3));
         }
@@ -146,14 +151,14 @@
     <div id="map"></div>
     <div id="controls">
         <input type="text" id="search-box" placeholder="コールサイン・航空会社・機種で検索" oninput="filterFlights()">
-        
+
         <div class="watch-input-row">
             <input type="text" id="watch-input" placeholder="コールサイン/登録番号を監視" onkeydown="if(event.key==='Enter')addToWatchlist()">
             <button onclick="addToWatchlist()">＋</button>
         </div>
-        
+
         <div id="watchlist-container"></div>
-        
+
         <button onclick="refreshFlights()">🔄 更新</button>
         <div class="info" id="flight-count">フライト数: -</div>
         <div class="info" id="last-update">最終更新: -</div>
@@ -169,7 +174,7 @@
             maxZoom: 18
         }).addTo(map);
 
-        const API_BASE = 'http://localhost:5000/api';
+        const API_BASE = '/api';
         const flightMarkers = {};
         let allFlights = [];
 
@@ -251,7 +256,7 @@
         // === フライト表示 ===
         function createPlaneIcon(heading) {
             const h = heading || 0;
-            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" 
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
                 style="transform: rotate(${h}deg); transform-origin: center;">
                 <path fill="#e74c3c" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
             </svg>`;
@@ -273,21 +278,33 @@
             }
         }
 
+        // === bounds(地図の表示範囲)取得 ===
+        function getCurrentBoundsParam() {
+            const b = map.getBounds();
+            // バックエンドの順序: tl_y(北), tl_x(西), br_y(南), br_x(東)
+            const tl_y = b.getNorth();
+            const tl_x = b.getWest();
+            const br_y = b.getSouth();
+            const br_x = b.getEast();
+            return `${tl_y},${tl_x},${br_y},${br_x}`;
+        }
+
         async function fetchFlights() {
             try {
                 showError('');
-                const response = await fetch(`${API_BASE}/flights`);
+                const boundsParam = getCurrentBoundsParam();
+                const response = await fetch(`${API_BASE}/flights?bounds=${encodeURIComponent(boundsParam)}`);
                 if (!response.ok) {
                     const data = await response.json();
                     throw new Error(data.detail || data.error || `HTTP ${response.status}`);
                 }
                 const flights = await response.json();
-                
+
                 allFlights = flights;
                 filterFlights();
                 checkWatchList(flights);
-                
-                document.getElementById('last-update').textContent = 
+
+                document.getElementById('last-update').textContent =
                     `最終更新: ${new Date().toLocaleTimeString()}`;
             } catch (error) {
                 console.error('フライト取得エラー:', error);
@@ -307,6 +324,35 @@
             updateInfo(filtered.length, allFlights.length, query);
         }
 
+        function buildPopupContent(flight, loading = false) {
+            return `
+                <div class="flight-popup">
+                    <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
+                    <p><strong>航空会社:</strong> ${flight.airline || 'Unknown'}</p>
+                    <p><strong>機種:</strong> ${flight.aircraft || 'Unknown'}</p>
+                    <p><strong>登録番号:</strong> ${flight.registration || 'N/A'}</p>
+                    <div class="route">${flight.origin || 'N/A'} → ${flight.destination || 'N/A'}</div>
+                    <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
+                    <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
+                    <p><strong>方位:</strong> ${flight.heading || 0}°</p>
+                    ${loading ? '<p class="loading-note">詳細情報を取得中...</p>' : ''}
+                </div>
+            `;
+        }
+
+        async function loadFlightDetails(flightId, marker) {
+            try {
+                const boundsParam = getCurrentBoundsParam();
+                const response = await fetch(`${API_BASE}/flight/${flightId}?bounds=${encodeURIComponent(boundsParam)}`);
+                if (!response.ok) return; // 失敗時は基本情報のまま(フォールバック)
+                const detail = await response.json();
+                marker.setPopupContent(buildPopupContent(detail));
+            } catch (error) {
+                console.error('詳細取得エラー:', error);
+                // フォールバック: 基本情報のまま維持
+            }
+        }
+
         function updateMap(flights) {
             const currentIds = new Set(flights.map(f => f.id));
             for (const id in flightMarkers) {
@@ -321,21 +367,19 @@
                 if (flightMarkers[flight.id]) {
                     flightMarkers[flight.id].setLatLng(pos);
                     flightMarkers[flight.id].setIcon(createPlaneIcon(heading));
+                    // 基本情報だけ随時更新(詳細は開いたときのみ再取得)
+                    flightMarkers[flight.id]._basicFlight = flight;
                 } else {
                     const marker = L.marker(pos, { icon: createPlaneIcon(heading) }).addTo(map);
-                    const popupContent = `
-                        <div class="flight-popup">
-                            <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
-                            <p><strong>航空会社:</strong> ${flight.airline}</p>
-                            <p><strong>機種:</strong> ${flight.aircraft}</p>
-                            <p><strong>登録番号:</strong> ${flight.registration}</p>
-                            <div class="route">${flight.origin} → ${flight.destination}</div>
-                            <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
-                            <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
-                            <p><strong>方位:</strong> ${heading}°</p>
-                        </div>
-                    `;
-                    marker.bindPopup(popupContent);
+                    marker._basicFlight = flight;
+                    marker.bindPopup(buildPopupContent(flight));
+
+                    // ポップアップを開いたタイミングで詳細取得
+                    marker.on('popupopen', () => {
+                        marker.setPopupContent(buildPopupContent(marker._basicFlight, true));
+                        loadFlightDetails(flight.id, marker);
+                    });
+
                     flightMarkers[flight.id] = marker;
                 }
             });
@@ -353,6 +397,17 @@
         function refreshFlights() {
             fetchFlights();
         }
+
+        // === 地図移動・ズーム時の再取得(デバウンス付き) ===
+        let moveDebounceTimer = null;
+        function onMapMoveEnd() {
+            clearTimeout(moveDebounceTimer);
+            moveDebounceTimer = setTimeout(() => {
+                fetchFlights();
+            }, 800);
+        }
+        map.on('moveend', onMapMoveEnd);
+        map.on('zoomend', onMapMoveEnd);
 
         setInterval(fetchFlights, 30000);
         renderWatchList();
