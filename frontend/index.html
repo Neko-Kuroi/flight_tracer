@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Radar - Leaflet</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            min-width: 260px;
+            max-width: 300px;
+        }
+        #controls input[type="text"] {
+            width: 100%;
+            padding: 8px 10px;
+            margin-bottom: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        #controls input[type="text"]:focus {
+            outline: none;
+            border-color: #1a73e8;
+        }
+        #controls button {
+            width: 100%;
+            padding: 8px;
+            background: #1a73e8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        #controls button:hover {
+            background: #1557b0;
+        }
+        #controls .info {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+        #controls .error {
+            color: #c5221f;
+            font-size: 12px;
+            margin-top: 6px;
+            padding: 6px;
+            background: #fce8e8;
+            border-radius: 4px;
+            display: none;
+        }
+        #controls .error.visible {
+            display: block;
+        }
+        
+        /* ウォッチリスト */
+        .watch-input-row {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        .watch-input-row input {
+            flex: 1;
+            margin-bottom: 0 !important;
+        }
+        .watch-input-row button {
+            width: auto !important;
+            padding: 8px 12px !important;
+        }
+        #watchlist-container {
+            margin-bottom: 8px;
+            min-height: 10px;
+        }
+        .watch-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #e8f0fe;
+            color: #1a73e8;
+            border-radius: 12px;
+            padding: 3px 8px;
+            font-size: 12px;
+            margin: 2px 2px 0 0;
+            transition: all 0.3s ease;
+        }
+        .watch-tag.active {
+            background: #d4edda;
+            color: #155724;
+            font-weight: bold;
+            box-shadow: 0 0 4px rgba(21, 87, 36, 0.4);
+        }
+        .watch-tag button {
+            all: unset;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            width: auto !important;
+            padding: 0 !important;
+            background: transparent !important;
+            color: inherit !important;
+            opacity: 0.6;
+            margin-left: 4px;
+        }
+        .watch-tag button:hover {
+            opacity: 1;
+        }
+        
+        .flight-popup {
+            min-width: 260px;
+        }
+        .flight-popup h3 {
+            margin: 0 0 8px 0;
+            color: #1a73e8;
+            font-size: 16px;
+        }
+        .flight-popup p {
+            margin: 4px 0;
+            font-size: 13px;
+            color: #444;
+        }
+        .flight-popup .route {
+            font-weight: bold;
+            color: #333;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        .flight-icon {
+            filter: drop-shadow(1px 1px 2px rgba(0,0,0,0.3));
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="controls">
+        <input type="text" id="search-box" placeholder="コールサイン・航空会社・機種で検索" oninput="filterFlights()">
+        
+        <div class="watch-input-row">
+            <input type="text" id="watch-input" placeholder="コールサイン/登録番号を監視" onkeydown="if(event.key==='Enter')addToWatchlist()">
+            <button onclick="addToWatchlist()">＋</button>
+        </div>
+        
+        <div id="watchlist-container"></div>
+        
+        <button onclick="refreshFlights()">🔄 更新</button>
+        <div class="info" id="flight-count">フライト数: -</div>
+        <div class="info" id="last-update">最終更新: -</div>
+        <div class="error" id="error-msg"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // === 地図初期化 ===
+        const map = L.map('map').setView([35.6762, 139.6503], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 18
+        }).addTo(map);
+
+        const API_BASE = 'http://localhost:5000/api';
+        const flightMarkers = {};
+        let allFlights = [];
+
+        // === ウォッチリスト ===
+        let watchList = JSON.parse(localStorage.getItem('flightWatchList') || '[]');
+        let watchStatus = {};
+
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        function saveWatchList() {
+            localStorage.setItem('flightWatchList', JSON.stringify(watchList));
+        }
+
+        function addToWatchlist() {
+            const input = document.getElementById('watch-input');
+            const value = input.value.trim().toUpperCase();
+            if (!value) return;
+            if (watchList.includes(value)) {
+                input.value = '';
+                return;
+            }
+            watchList.push(value);
+            watchStatus[value] = false;
+            saveWatchList();
+            input.value = '';
+            renderWatchList();
+        }
+
+        function removeFromWatchlist(value) {
+            watchList = watchList.filter(v => v !== value);
+            delete watchStatus[value];
+            saveWatchList();
+            renderWatchList();
+        }
+
+        function renderWatchList() {
+            const container = document.getElementById('watchlist-container');
+            container.innerHTML = watchList.map(v => {
+                const active = watchStatus[v];
+                return `<span class="watch-tag ${active ? 'active' : ''}">
+                    ${active ? '🟢' : '⚪'} ${v}
+                    <button onclick="removeFromWatchlist('${v}')" title="監視解除">✕</button>
+                </span>`;
+            }).join('');
+        }
+
+        function checkWatchList(flights) {
+            if (watchList.length === 0) return;
+            const detectedNow = new Set();
+            flights.forEach(f => {
+                const callsign = (f.callsign || '').toUpperCase();
+                const registration = (f.registration || '').toUpperCase();
+                watchList.forEach(w => {
+                    if (callsign === w || registration === w) detectedNow.add(w);
+                });
+            });
+            watchList.forEach(w => {
+                const wasActive = watchStatus[w];
+                const isActive = detectedNow.has(w);
+                if (!wasActive && isActive) {
+                    notify(`✈️ ${w} を検知しました`, '監視中の機体がレーダーに現れました');
+                } else if (wasActive && !isActive) {
+                    notify(`📡 ${w} をロストしました`, 'レーダー範囲外に出た可能性があります');
+                }
+                watchStatus[w] = isActive;
+            });
+            renderWatchList();
+        }
+
+        function notify(title, body) {
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(title, { body });
+            }
+            console.log(`[通知] ${title}: ${body}`);
+        }
+
+        // === フライト表示 ===
+        function createPlaneIcon(heading) {
+            const h = heading || 0;
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" 
+                style="transform: rotate(${h}deg); transform-origin: center;">
+                <path fill="#e74c3c" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+            </svg>`;
+            return L.divIcon({
+                html: svg,
+                className: 'flight-icon',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('error-msg');
+            if (msg) {
+                el.textContent = msg;
+                el.classList.add('visible');
+            } else {
+                el.classList.remove('visible');
+            }
+        }
+
+        async function fetchFlights() {
+            try {
+                showError('');
+                const response = await fetch(`${API_BASE}/flights`);
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+                }
+                const flights = await response.json();
+                
+                allFlights = flights;
+                filterFlights();
+                checkWatchList(flights);
+                
+                document.getElementById('last-update').textContent = 
+                    `最終更新: ${new Date().toLocaleTimeString()}`;
+            } catch (error) {
+                console.error('フライト取得エラー:', error);
+                showError(`取得失敗: ${error.message}`);
+            }
+        }
+
+        function filterFlights() {
+            const query = document.getElementById('search-box').value.trim().toLowerCase();
+            const filtered = query
+                ? allFlights.filter(f => {
+                    const text = `${f.callsign || ''} ${f.airline || ''} ${f.aircraft || ''} ${f.registration || ''}`.toLowerCase();
+                    return text.includes(query);
+                  })
+                : allFlights;
+            updateMap(filtered);
+            updateInfo(filtered.length, allFlights.length, query);
+        }
+
+        function updateMap(flights) {
+            const currentIds = new Set(flights.map(f => f.id));
+            for (const id in flightMarkers) {
+                if (!currentIds.has(id)) {
+                    map.removeLayer(flightMarkers[id]);
+                    delete flightMarkers[id];
+                }
+            }
+            flights.forEach(flight => {
+                const pos = [flight.lat, flight.lng];
+                const heading = flight.heading || 0;
+                if (flightMarkers[flight.id]) {
+                    flightMarkers[flight.id].setLatLng(pos);
+                    flightMarkers[flight.id].setIcon(createPlaneIcon(heading));
+                } else {
+                    const marker = L.marker(pos, { icon: createPlaneIcon(heading) }).addTo(map);
+                    const popupContent = `
+                        <div class="flight-popup">
+                            <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
+                            <p><strong>航空会社:</strong> ${flight.airline}</p>
+                            <p><strong>機種:</strong> ${flight.aircraft}</p>
+                            <p><strong>登録番号:</strong> ${flight.registration}</p>
+                            <div class="route">${flight.origin} → ${flight.destination}</div>
+                            <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
+                            <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
+                            <p><strong>方位:</strong> ${heading}°</p>
+                        </div>
+                    `;
+                    marker.bindPopup(popupContent);
+                    flightMarkers[flight.id] = marker;
+                }
+            });
+        }
+
+        function updateInfo(filteredCount, totalCount, query) {
+            const el = document.getElementById('flight-count');
+            if (query) {
+                el.textContent = `表示: ${filteredCount} / 全${totalCount}件`;
+            } else {
+                el.textContent = `フライト数: ${totalCount}`;
+            }
+        }
+
+        function refreshFlights() {
+            fetchFlights();
+        }
+
+        setInterval(fetchFlights, 30000);
+        renderWatchList();
+        fetchFlights();
+    </script>
+</body>
+</html>
