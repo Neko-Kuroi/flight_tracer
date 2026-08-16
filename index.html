@@ -306,7 +306,21 @@
             // -180〜180の範囲に正規化
             return ((lng + 180) % 360 + 360) % 360 - 180;
         }
-
+        
+        function getCurrentBoundsParam() {
+            if (activeRegionBounds) {
+                const r = activeRegionBounds;
+                return `${r.tl_y},${r.tl_x},${r.br_y},${r.br_x}`;
+            }
+            const b = map.getBounds();
+            const tl_y = b.getNorth();
+            const tl_x = normalizeLng(b.getWest());
+            const br_y = b.getSouth();
+            const br_x = normalizeLng(b.getEast());
+            return `${tl_y},${tl_x},${br_y},${br_x}`;
+        }
+        
+        /*
         function getCurrentBoundsParam() {
             const b = map.getBounds();
             const tl_y = b.getNorth();
@@ -315,6 +329,8 @@
             const br_x = normalizeLng(b.getEast());
             return `${tl_y},${tl_x},${br_y},${br_x}`;
         }
+        */
+        
         /*
         function getCurrentBoundsParam() {
             const b = map.getBounds();
@@ -325,7 +341,9 @@
             return `${tl_y},${tl_x},${br_y},${br_x}`;
         }
         */
-
+        
+        let activeRegionBounds = null; // リージョン選択中はこちらを優先
+        
         const REGIONS = {
             japan:         { tl_y: 46, tl_x: 122, br_y: 24, br_x: 146 },   // area=528
             us_west:       { tl_y: 49, tl_x: -125, br_y: 32, br_x: -114 }, // area=187
@@ -428,6 +446,7 @@ async function searchByRegistration() {
         function jumpToRegion(key) {
             const r = REGIONS[key];
             if (!r) return;
+            activeRegionBounds = r;  // ← この1行を追加
             const bounds = L.latLngBounds([r.br_y, r.tl_x], [r.tl_y, r.br_x]);
             map.fitBounds(bounds);
         }
@@ -581,6 +600,7 @@ async function searchByRegistration() {
         // === 地図移動・ズーム時の再取得(デバウンス付き) ===
         let moveDebounceTimer = null;
         function onMapMoveEnd() {
+            activeRegionBounds = null;  // ← この1行を追加(手動操作でリージョン固定を解除)
             clearTimeout(moveDebounceTimer);
             moveDebounceTimer = setTimeout(() => {
                 fetchFlights();
