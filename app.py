@@ -107,8 +107,8 @@ def serialize_flight_basic(flight):
 
 def serialize_flight_detailed(flight, raw_details=None):
     """
-    set_flight_details()実行後の情報 + 生のdetails辞書からICAOコード・航跡を追加。
-    実機確認済み(2026-XX-XX): airport.origin/destination.code.icao、trail[].lat/lng/alt/ts
+    set_flight_details()実行後の情報 + 生のdetails辞書からICAOコード・IATAコード・航跡を追加。
+    実機確認済み: airport.origin/destination.code.icao / code.iata、trail[].lat/lng/alt/ts
     のキー構造は実データと一致することを確認済み。
     """
     result = {
@@ -126,6 +126,8 @@ def serialize_flight_detailed(flight, raw_details=None):
         'heading': flight.heading or 0,
         'origin_icao': None,
         'destination_icao': None,
+        'origin_iata': None,
+        'destination_iata': None,
         'trail': [],
     }
 
@@ -133,8 +135,13 @@ def serialize_flight_detailed(flight, raw_details=None):
         airport = raw_details.get('airport', {}) or {}
         origin = airport.get('origin') or {}
         destination = airport.get('destination') or {}
-        result['origin_icao'] = (origin.get('code') or {}).get('icao')
-        result['destination_icao'] = (destination.get('code') or {}).get('icao')
+        origin_code = origin.get('code') or {}
+        destination_code = destination.get('code') or {}
+
+        result['origin_icao'] = origin_code.get('icao')
+        result['destination_icao'] = destination_code.get('icao')
+        result['origin_iata'] = origin_code.get('iata')
+        result['destination_iata'] = destination_code.get('iata')
 
         # 実機確認: trailは新しい順(降順)で返る。ts昇順(古い→新しい)にソートしてから渡す
         trail_raw = raw_details.get('trail', []) or []

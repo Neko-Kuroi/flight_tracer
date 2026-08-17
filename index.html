@@ -137,11 +137,13 @@
             margin: 8px 0;
             font-size: 14px;
         }
+        /*
         .flight-popup .icao-info {
             font-size: 11px;
             color: #888;
             margin-top: 6px;
         }
+        */
         .flight-popup .loading-note {
             color: #999;
             font-size: 11px;
@@ -149,6 +151,44 @@
         }
         .flight-icon {
             filter: drop-shadow(1px 1px 2px rgba(0,0,0,0.3));
+        }
+        .flight-popup .code-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 6px;
+            font-size: 12px;
+        }
+        .flight-popup .icao-badge {
+            background: #1a1a1a;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        /*
+        .flight-popup .iata-badge {
+            color: #666;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+        }
+        */
+        .flight-popup .iata-badge {
+            background: #e3f2fd;
+            color: #1565c0;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        .flight-popup .code-arrow {
+            color: #bbb;
+            font-size: 11px;
         }
     </style>
 </head>
@@ -511,26 +551,54 @@ async function searchByRegistration() {
             updateInfo(filtered.length, allFlights.length, query);
         }
 
-        function buildPopupContent(flight, loading = false) {
-            const icaoInfo = flight.origin_icao && flight.destination_icao
-                ? `<p class="icao-info">ICAO: ${flight.origin_icao} → ${flight.destination_icao}</p>`
-                : '';
+function buildPopupContent(flight, loading = false) {
+    const codeRow = (flight.origin_icao || flight.origin_iata)
+        ? `
+            <div class="code-row">
+                <span class="icao-badge">${flight.origin_icao || '----'}</span>
+                <span class="iata-badge">(${flight.origin_iata || '-'})</span>
+                <span class="code-arrow">→</span>
+                <span class="icao-badge">${flight.destination_icao || '----'}</span>
+                <span class="iata-badge">(${flight.destination_iata || '-'})</span>
+            </div>
+        `
+        : '';
 
-            return `
-                <div class="flight-popup">
-                    <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
-                    <p><strong>航空会社:</strong> ${flight.airline || 'Unknown'}</p>
-                    <p><strong>機種:</strong> ${flight.aircraft || 'Unknown'}</p>
-                    <p><strong>登録番号:</strong> ${flight.registration || 'N/A'}</p>
-                    <div class="route">${flight.origin || 'N/A'} → ${flight.destination || 'N/A'}</div>
-                    <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
-                    <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
-                    <p><strong>方位:</strong> ${flight.heading || 0}°</p>
-                    ${icaoInfo}
-                    ${loading ? '<p class="loading-note">詳細情報を取得中...</p>' : ''}
-                </div>
-            `;
-        }
+    return `
+        <div class="flight-popup">
+            <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
+            <p><strong>航空会社:</strong> ${flight.airline || 'Unknown'}</p>
+            <p><strong>機種:</strong> ${flight.aircraft || 'Unknown'}</p>
+            <p><strong>登録番号:</strong> ${flight.registration || 'N/A'}</p>
+            <div class="route">${flight.origin || 'N/A'} → ${flight.destination || 'N/A'}</div>
+            <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
+            <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
+            <p><strong>方位:</strong> ${flight.heading || 0}°</p>
+            ${codeRow}
+            ${loading ? '<p class="loading-note">詳細情報を取得中...</p>' : ''}
+        </div>
+    `;
+}
+//        function buildPopupContent(flight, loading = false) {
+//            const icaoInfo = flight.origin_icao && flight.destination_icao
+//                ? `<p class="icao-info">ICAO: ${flight.origin_icao} → ${flight.destination_icao}</p>`
+//                : '';
+//
+//            return `
+//                <div class="flight-popup">
+//                    <h3>✈️ ${flight.callsign || 'Unknown'}</h3>
+//                    <p><strong>航空会社:</strong> ${flight.airline || 'Unknown'}</p>
+//                    <p><strong>機種:</strong> ${flight.aircraft || 'Unknown'}</p>
+//                    <p><strong>登録番号:</strong> ${flight.registration || 'N/A'}</p>
+//                    <div class="route">${flight.origin || 'N/A'} → ${flight.destination || 'N/A'}</div>
+//                    <p><strong>高度:</strong> ${flight.altitude ? flight.altitude + ' ft' : 'N/A'}</p>
+//                    <p><strong>速度:</strong> ${flight.speed ? flight.speed + ' kts' : 'N/A'}</p>
+//                    <p><strong>方位:</strong> ${flight.heading || 0}°</p>
+//                    ${icaoInfo}
+//                    ${loading ? '<p class="loading-note">詳細情報を取得中...</p>' : ''}
+//                </div>
+//            `;
+//        }
 
         // === 航跡(ポリライン)描画 ===
         function drawTrail(flightId, trailPoints) {
