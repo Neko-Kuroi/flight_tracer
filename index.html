@@ -556,10 +556,10 @@ function buildPopupContent(flight, loading = false) {
         ? `
             <div class="code-row">
                 <span class="icao-badge">${flight.origin_icao || '----'}</span>
-                <span class="iata-badge">(${flight.origin_iata || '-'})</span>
+                <span class="iata-badge">${flight.origin_iata || '-'}</span>
                 <span class="code-arrow">→</span>
                 <span class="icao-badge">${flight.destination_icao || '----'}</span>
-                <span class="iata-badge">(${flight.destination_iata || '-'})</span>
+                <span class="iata-badge">${flight.destination_iata || '-'}</span>
             </div>
         `
         : '';
