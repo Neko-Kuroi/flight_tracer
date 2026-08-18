@@ -190,6 +190,72 @@
             color: #bbb;
             font-size: 11px;
         }
+        .flight-photo {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #eee;
+            position: relative;
+        }
+        .flight-photo .photo-close-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 18px;
+            height: 18px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.55);
+            color: #fff;
+            font-size: 12px;
+            line-height: 18px;
+            text-align: center;
+            padding: 0;
+            cursor: pointer;
+            z-index: 10;
+        }
+        .flight-photo .photo-close-btn:hover {
+            background: rgba(0,0,0,0.8);
+        }
+        .flight-photo a {
+            display: block;
+            text-decoration: none;
+        }
+        .flight-photo img {
+            width: 100%;
+            max-height: 160px;
+            object-fit: cover;
+            border-radius: 4px;
+            display: block;
+        }
+        .flight-photo .photo-credit {
+            margin-top: 4px;
+            font-size: 10px;
+            color: #999;
+            text-align: right;
+        }
+        .flight-photo .photo-loading,
+        .flight-photo .photo-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: 60px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            color: #aaa;
+            font-size: 11px;
+        }
+        .flight-photo .photo-spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ddd;
+            border-top-color: #1a73e8;
+            border-radius: 50%;
+            animation: photo-spin 0.8s linear infinite;
+        }
+        @keyframes photo-spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -551,7 +617,53 @@ async function searchByRegistration() {
             updateInfo(filtered.length, allFlights.length, query);
         }
 
-function buildPopupContent(flight, loading = false) {
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+}
+
+function buildPhotoSection(photoState, flightId, dismissed) {
+    if (!photoState || dismissed) return '';
+
+    if (photoState.status === 'loading') {
+        return `
+            <div class="flight-photo">
+                <div class="photo-loading"><span class="photo-spinner"></span>写真を確認中...</div>
+            </div>
+        `;
+    }
+
+    if (photoState.status === 'found') {
+        const isSafeUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+        if (!isSafeUrl(photoState.thumbnail_url)) return '';
+
+        const url = escapeHtml(photoState.thumbnail_url);
+        const link = isSafeUrl(photoState.link) ? escapeHtml(photoState.link) : '#';
+        const photographer = escapeHtml(photoState.photographer || 'Unknown');
+        const safeFlightId = escapeHtml(String(flightId));
+        return `
+            <div class="flight-photo">
+                <button class="photo-close-btn" data-flight-id="${safeFlightId}" onclick="dismissAircraftPhoto(this.dataset.flightId)" title="写真を閉じる">×</button>
+                <a href="${link}" target="_blank" rel="noopener noreferrer">
+                    <img src="${url}" alt="機体写真" loading="lazy">
+                    <div class="photo-credit">Photo by ${photographer} / planespotters.net</div>
+                </a>
+            </div>
+        `;
+    }
+
+    // status === 'notfound'
+    const safeFlightId = escapeHtml(String(flightId));
+    return `
+        <div class="flight-photo">
+            <button class="photo-close-btn" data-flight-id="${safeFlightId}" onclick="dismissAircraftPhoto(this.dataset.flightId)" title="閉じる">×</button>
+            <div class="photo-placeholder">📷 写真なし</div>
+        </div>
+    `;
+}
+
+function buildPopupContent(flight, loading = false, photoState = null, photoDismissed = false) {
     const codeRow = (flight.origin_icao || flight.origin_iata)
         ? `
             <div class="code-row">
@@ -576,6 +688,7 @@ function buildPopupContent(flight, loading = false) {
             <p><strong>方位:</strong> ${flight.heading || 0}°</p>
             ${codeRow}
             ${loading ? '<p class="loading-note">詳細情報を取得中...</p>' : ''}
+            ${buildPhotoSection(photoState, flight.id, photoDismissed)}
         </div>
     `;
 }
@@ -629,16 +742,92 @@ function buildPopupContent(flight, loading = false) {
             }
         }
 
+        // registration -> photoState のキャッシュ({status:'found'|'notfound', ...})
+        // 同じ機体を何度ポップアップ開閉しても再取得しないためのクライアント側キャッシュ
+        // (サーバー側にも24時間キャッシュがあるので二重防御)
+        const photoCache = new Map();
+
+        function renderPopup(marker) {
+            marker.setPopupContent(
+                buildPopupContent(marker._currentFlight, marker._detailLoading, marker._photoState, marker._photoDismissed)
+            );
+        }
+
+        function dismissAircraftPhoto(flightId) {
+            const marker = flightMarkers[flightId];
+            if (!marker) return;
+            marker._photoDismissed = true;
+            // 重要: setPopupContent()をこのクリックハンドラ内で同期的に呼ぶと、
+            // Leafletがクリックされた要素からポップアップの外枠まで親を辿って
+            // 「ポップアップ内のクリックか」を判定する処理より先にDOMが
+            // 差し替えられてしまい、判定に失敗してポップアップごと閉じてしまう。
+            // 1tick遅らせることでLeaflet側の判定を先に完了させる。
+            setTimeout(() => renderPopup(marker), 0);
+        }
+
+        async function loadAircraftPhoto(registration, marker) {
+            const reg = (registration || '').trim().toUpperCase();
+
+            if (!reg || reg === 'N/A') {
+                marker._photoState = { status: 'notfound' };
+                renderPopup(marker);
+                return;
+            }
+
+            if (photoCache.has(reg)) {
+                marker._photoState = photoCache.get(reg);
+                renderPopup(marker);
+                return;
+            }
+
+            marker._photoState = { status: 'loading' };
+            renderPopup(marker);
+
+            let result;
+            try {
+                const response = await fetch(`${API_BASE}/photo/${encodeURIComponent(reg)}`);
+                if (!response.ok) {
+                    result = { status: 'notfound' };
+                } else {
+                    const data = await response.json();
+                    result = data.found
+                        ? {
+                            status: 'found',
+                            thumbnail_url: data.thumbnail_url,
+                            photographer: data.photographer,
+                            link: data.link,
+                          }
+                        : { status: 'notfound' };
+                }
+            } catch (error) {
+                console.error('写真取得エラー:', error);
+                result = { status: 'notfound' };
+            }
+
+            photoCache.set(reg, result);
+
+            // ポップアップが閉じられていても marker._photoState 自体は更新しておく
+            // (再度開いたときにキャッシュとして即反映される)
+            marker._photoState = result;
+            if (marker.isPopupOpen()) {
+                renderPopup(marker);
+            }
+        }
+
         async function loadFlightDetails(flightId, marker) {
             try {
                 const boundsParam = getCurrentBoundsParam();
                 const response = await fetch(`${API_BASE}/flight/${flightId}?bounds=${encodeURIComponent(boundsParam)}`);
                 if (!response.ok) return; // 失敗時は基本情報のまま(フォールバック)
                 const detail = await response.json();
-                marker.setPopupContent(buildPopupContent(detail));
+                marker._currentFlight = detail;
+                marker._detailLoading = false;
+                renderPopup(marker);
                 drawTrail(flightId, detail.trail);
             } catch (error) {
                 console.error('詳細取得エラー:', error);
+                marker._detailLoading = false;
+                renderPopup(marker);
             }
         }
 
@@ -661,11 +850,20 @@ function buildPopupContent(flight, loading = false) {
                 } else {
                     const marker = L.marker(pos, { icon: createPlaneIcon(heading) }).addTo(map);
                     marker._basicFlight = flight;
+                    marker._currentFlight = flight;
+                    marker._detailLoading = false;
+                    marker._photoState = null;
+                    marker._photoDismissed = false;
                     marker.bindPopup(buildPopupContent(flight));
 
                     marker.on('popupopen', () => {
-                        marker.setPopupContent(buildPopupContent(marker._basicFlight, true));
+                        marker._currentFlight = marker._basicFlight;
+                        marker._detailLoading = true;
+                        marker._photoDismissed = false;
+                        renderPopup(marker);
+
                         loadFlightDetails(flight.id, marker);
+                        loadAircraftPhoto(marker._basicFlight.registration, marker);
                     });
 
                     marker.on('popupclose', () => {

@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from FlightRadarAPI import FlightRadar24API
@@ -235,6 +237,66 @@ def search_by_registration():
 
     target = flights[0]
     return jsonify(serialize_flight_basic(target))
+
+# === 機体写真(Planespotters.net 非公式API プロキシ) ===
+PLANESPOTTERS_API_BASE = "https://api.planespotters.net/pub/photos/reg"
+PHOTO_CACHE_TTL = 24 * 60 * 60  # 24時間
+
+# {registration: {"data": {...}, "ts": float}}
+_photo_cache = {}
+
+_photo_session = requests.Session()
+_photo_session.headers.update({
+    "User-Agent": "flight_tracer/1.0 (+https://github.com/Neko-Kuroi/flight_tracer)"
+})
+
+
+def fetch_aircraft_photo(registration):
+    """
+    Planespotters.netから登録番号で写真を検索する。
+    非公式APIのため、失敗・タイムアウト・0件は全て found=False として
+    フロント側の表示を止めないようにする(呼び出し元では例外を出さない)。
+    """
+    now = time.time()
+    cached = _photo_cache.get(registration)
+    if cached and (now - cached["ts"]) < PHOTO_CACHE_TTL:
+        return cached["data"]
+
+    result = {"found": False}
+    try:
+        resp = _photo_session.get(
+            f"{PLANESPOTTERS_API_BASE}/{registration}",
+            timeout=5,
+        )
+        if resp.ok:
+            data = resp.json()
+            photos = data.get("photos") or []
+            if photos:
+                photo = photos[0]
+                thumb = photo.get("thumbnail") or photo.get("thumbnail_large") or {}
+                result = {
+                    "found": True,
+                    "thumbnail_url": thumb.get("src"),
+                    "photographer": photo.get("photographer"),
+                    "link": photo.get("link"),
+                }
+    except (requests.RequestException, ValueError) as e:
+        app.logger.warning(f"Planespotters photo fetch failed for {registration}: {e}")
+
+    _photo_cache[registration] = {"data": result, "ts": now}
+    return result
+
+
+@app.route('/api/photo/<registration>')
+def get_aircraft_photo(registration):
+    """機体登録番号から写真情報を取得(見つからない場合もHTTP 200 + found:false)"""
+    reg = registration.strip().upper()
+    if not reg or reg == 'N/A':
+        return jsonify({"found": False})
+
+    result = fetch_aircraft_photo(reg)
+    return jsonify(result)
+
 
 if __name__ == '__main__':
     print(f"[起動確認] app.py の場所: {SCRIPT_DIR}")
