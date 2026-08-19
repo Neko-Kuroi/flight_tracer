@@ -347,7 +347,7 @@
 
         const API_BASE = '/api';
         const flightMarkers = {};
-        const trailPolylines = {}; // { flightId: L.Polyline }
+        const trailPolylines = {}; // { flightId: L.Polyline[] }(高度ごとにセグメント分割するため配列)
         let allFlights = [];
 
         // === ウォッチリスト ===
@@ -900,30 +900,42 @@ function buildPopupContent(flight, loading = false, photoState = null, photoDism
 //        }
 
         // === 航跡(ポリライン)描画 ===
+        // Leafletのpolylineは1本につき単色しか持てないため、高度に応じた
+        // グラデーションを表現するには2点ごとの短いセグメントに分割し、
+        // セグメントごとにaltitudeToColor()の色を設定する(アイコンの
+        // 高度配色と表現を揃えるため)。セグメント色は両端点の高度の
+        // 平均値で決定(片方欠損時はもう片方の高度を採用)
         function drawTrail(flightId, trailPoints) {
             removeTrail(flightId);
 
             if (!trailPoints || trailPoints.length < 2) return;
 
-            const latlngs = trailPoints
-                .filter(p => p.lat != null && p.lng != null)
-                .map(p => [p.lat, p.lng]);
+            const points = trailPoints.filter(p => p.lat != null && p.lng != null);
+            if (points.length < 2) return;
 
-            if (latlngs.length < 2) return;
+            const segments = [];
+            for (let i = 0; i < points.length - 1; i++) {
+                const p1 = points[i];
+                const p2 = points[i + 1];
+                const alt1 = p1.alt;
+                const alt2 = p2.alt;
+                const segAlt = (alt1 != null && alt2 != null) ? (alt1 + alt2) / 2
+                             : (alt1 != null ? alt1 : alt2);
 
-            const polyline = L.polyline(latlngs, {
-                color: '#1a73e8',
-                weight: 3,
-                opacity: 0.7,
-                dashArray: '6, 6'
-            }).addTo(map);
+                const segment = L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
+                    color: altitudeToColor(segAlt),
+                    weight: 3,
+                    opacity: 0.7
+                }).addTo(map);
+                segments.push(segment);
+            }
 
-            trailPolylines[flightId] = polyline;
+            trailPolylines[flightId] = segments;
         }
 
         function removeTrail(flightId) {
             if (trailPolylines[flightId]) {
-                map.removeLayer(trailPolylines[flightId]);
+                trailPolylines[flightId].forEach(seg => map.removeLayer(seg));
                 delete trailPolylines[flightId];
             }
         }
