@@ -565,11 +565,54 @@
         }
 
         // === フライト表示 ===
-        function createPlaneIcon(heading) {
+        // tar1090(html/defaults.js)のColorByAlt.air.hをそのまま踏襲した
+        // 高度(ft)→色相(0-359°)の折れ線補間。彩度88%・明度50%は固定
+        // (28段の知覚補正テーブルは、本アプリのアイコンサイズでは効果が
+        //  薄く保守コストに見合わないため省略。詳細は会話履歴を参照)
+        const ALTITUDE_HUE_STOPS = [
+            { alt: 0,     hue: 20 },   // オレンジ
+            { alt: 2000,  hue: 32.5 },
+            { alt: 4000,  hue: 43 },
+            { alt: 6000,  hue: 54 },
+            { alt: 8000,  hue: 72 },
+            { alt: 9000,  hue: 85 },
+            { alt: 11000, hue: 140 },  // 緑
+            { alt: 40000, hue: 300 },  // 紫/マゼンタ
+            { alt: 51000, hue: 360 },  // 赤(0°と同じ)
+        ];
+
+        function altitudeToColor(altitude) {
+            if (altitude === null || altitude === undefined) {
+                return 'hsl(0, 0%, 75%)';   // 高度不明
+            }
+            if (altitude <= 0) {
+                return 'hsl(220, 0%, 30%)'; // 地上待機(s:0のため色相は実質無視される)
+            }
+
+            const stops = ALTITUDE_HUE_STOPS;
+            if (altitude <= stops[0].alt) {
+                return `hsl(${stops[0].hue}, 88%, 50%)`;
+            }
+            if (altitude >= stops[stops.length - 1].alt) {
+                return 'hsl(0, 88%, 50%)'; // 360°は0°と同じ(赤)
+            }
+            for (let i = 0; i < stops.length - 1; i++) {
+                if (altitude >= stops[i].alt && altitude <= stops[i + 1].alt) {
+                    const range = stops[i + 1].alt - stops[i].alt;
+                    const progress = (altitude - stops[i].alt) / range;
+                    const hue = stops[i].hue + (stops[i + 1].hue - stops[i].hue) * progress;
+                    return `hsl(${hue}, 88%, 50%)`;
+                }
+            }
+            return `hsl(${stops[0].hue}, 88%, 50%)`; // 理論上到達しないフォールバック
+        }
+
+        function createPlaneIcon(heading, altitude) {
             const h = heading || 0;
+            const color = altitudeToColor(altitude);
             const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
                 style="transform: rotate(${h}deg); transform-origin: center;">
-                <path fill="#e74c3c" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+                <path fill="${color}" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
             </svg>`;
             return L.divIcon({
                 html: svg,
@@ -988,10 +1031,10 @@ function buildPopupContent(flight, loading = false, photoState = null, photoDism
                 const heading = flight.heading || 0;
                 if (flightMarkers[flight.id]) {
                     flightMarkers[flight.id].setLatLng(pos);
-                    flightMarkers[flight.id].setIcon(createPlaneIcon(heading));
+                    flightMarkers[flight.id].setIcon(createPlaneIcon(heading, flight.altitude));
                     flightMarkers[flight.id]._basicFlight = flight;
                 } else {
-                    const marker = L.marker(pos, { icon: createPlaneIcon(heading) }).addTo(map);
+                    const marker = L.marker(pos, { icon: createPlaneIcon(heading, flight.altitude) }).addTo(map);
                     marker._basicFlight = flight;
                     marker._currentFlight = flight;
                     marker._detailLoading = false;
