@@ -81,19 +81,40 @@
             padding: 8px 12px !important;
         }
         #watchlist-container {
-            margin-bottom: 8px;
+            margin-bottom: 4px;
             min-height: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .watchlist-pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+        .watchlist-pagination button {
+            width: auto !important;
+            padding: 2px 10px !important;
+            font-size: 12px;
+        }
+        .watchlist-pagination button:disabled {
+            opacity: 0.4;
+            cursor: default;
         }
         .watch-tag {
-            display: inline-flex;
+            display: flex;
             align-items: center;
+            justify-content: space-between;
             gap: 4px;
             background: #e8f0fe;
             color: #1a73e8;
             border-radius: 12px;
             padding: 3px 8px;
             font-size: 12px;
-            margin: 2px 2px 0 0;
             transition: all 0.3s ease;
         }
         .watch-tag.active {
@@ -216,6 +237,19 @@
         .flight-photo .photo-close-btn:hover {
             background: rgba(0,0,0,0.8);
         }
+        .watch-tooltip {
+            background: #000 !important;
+            color: #fff !important;
+            border: none !important;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 12px;
+            padding: 3px 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+        }
+        .watch-tooltip::before {
+            border-top-color: #000 !important;
+        }
         .flight-photo a {
             display: block;
             text-decoration: none;
@@ -294,6 +328,7 @@
         </div>
 
         <div id="watchlist-container"></div>
+        <div id="watchlist-pagination" class="watchlist-pagination"></div>
 
         <button onclick="refreshFlights()">🔄 更新</button>
         <div class="info" id="flight-count">フライト数: -</div>
@@ -327,6 +362,10 @@
             localStorage.setItem('flightWatchList', JSON.stringify(watchList));
         }
 
+        const WATCH_LIST_MAX = 250;
+        const WATCH_PAGE_SIZE = 5;
+        let watchListPage = 0; // 0始まり
+
         function addToWatchlist() {
             const input = document.getElementById('watch-input');
             const value = input.value.trim().toUpperCase();
@@ -335,10 +374,16 @@
                 input.value = '';
                 return;
             }
+            if (watchList.length >= WATCH_LIST_MAX) {
+                alert(`監視できる機体は最大${WATCH_LIST_MAX}件までです`);
+                return;
+            }
             watchList.push(value);
             watchStatus[value] = false;
             saveWatchList();
             input.value = '';
+            // 追加した項目が見えるよう最終ページへ移動
+            watchListPage = Math.max(0, Math.ceil(watchList.length / WATCH_PAGE_SIZE) - 1);
             renderWatchList();
         }
 
@@ -347,29 +392,98 @@
             delete watchStatus[value];
             saveWatchList();
             renderWatchList();
+
+            // 次のポーリングを待たず、該当機体のtooltipがあれば即座に消す
+            for (const id in flightMarkers) {
+                const marker = flightMarkers[id];
+                const f = marker._basicFlight;
+                if (!f) continue;
+                const matches = (f.callsign || '').toUpperCase() === value ||
+                                 (f.registration || '').toUpperCase() === value;
+                if (matches && marker.getTooltip()) {
+                    marker.unbindTooltip();
+                    delete marker._watchTooltipLabel;
+                    watchTooltipMarkerIds.delete(id);
+                }
+            }
         }
 
         function renderWatchList() {
+            const totalPages = Math.max(1, Math.ceil(watchList.length / WATCH_PAGE_SIZE));
+            if (watchListPage >= totalPages) watchListPage = totalPages - 1;
+            if (watchListPage < 0) watchListPage = 0;
+
+            const start = watchListPage * WATCH_PAGE_SIZE;
+            const pageItems = watchList.slice(start, start + WATCH_PAGE_SIZE);
+
             const container = document.getElementById('watchlist-container');
-            container.innerHTML = watchList.map(v => {
+            container.innerHTML = pageItems.map(v => {
                 const active = watchStatus[v];
+                const safeValue = escapeHtml(v);
                 return `<span class="watch-tag ${active ? 'active' : ''}">
-                    ${active ? '🟢' : '⚪'} ${v}
-                    <button onclick="removeFromWatchlist('${v}')" title="監視解除">✕</button>
+                    <span>${active ? '🟢' : '⚪'} ${safeValue}</span>
+                    <button data-value="${safeValue}" onclick="removeFromWatchlist(this.dataset.value)" title="監視解除">✕</button>
                 </span>`;
             }).join('');
+
+            const paginationEl = document.getElementById('watchlist-pagination');
+            if (watchList.length === 0) {
+                paginationEl.innerHTML = '';
+            } else if (watchList.length <= WATCH_PAGE_SIZE) {
+                paginationEl.innerHTML = `<span>${watchList.length}/${WATCH_LIST_MAX}件</span>`;
+            } else {
+                paginationEl.innerHTML = `
+                    <button onclick="watchListPrevPage()" ${watchListPage === 0 ? 'disabled' : ''}>◀</button>
+                    <span>${watchListPage + 1} / ${totalPages}ページ (${watchList.length}/${WATCH_LIST_MAX}件)</span>
+                    <button onclick="watchListNextPage()" ${watchListPage >= totalPages - 1 ? 'disabled' : ''}>▶</button>
+                `;
+            }
         }
 
+        function watchListPrevPage() {
+            if (watchListPage > 0) {
+                watchListPage--;
+                renderWatchList();
+            }
+        }
+
+        function watchListNextPage() {
+            const totalPages = Math.max(1, Math.ceil(watchList.length / WATCH_PAGE_SIZE));
+            if (watchListPage < totalPages - 1) {
+                watchListPage++;
+                renderWatchList();
+            }
+        }
+
+        // 監視tooltipが現在表示されているマーカーのflight.idを保持
+        // (次回チェック時に「監視対象から外れた/ロストした」マーカーのtooltipを消すため)
+        let watchTooltipMarkerIds = new Set();
+
+        // 登録番号検索でヒットした機体コード。監視リストには入れないが、
+        // 見つかっている間はwatchListと同じ黒tooltipで地図上に表示する。
+        let searchHighlightValue = null;
+
         function checkWatchList(flights) {
-            if (watchList.length === 0) return;
+            const tooltipTargets = new Set(watchList);
+            if (searchHighlightValue) tooltipTargets.add(searchHighlightValue);
+
             const detectedNow = new Set();
-            flights.forEach(f => {
-                const callsign = (f.callsign || '').toUpperCase();
-                const registration = (f.registration || '').toUpperCase();
-                watchList.forEach(w => {
-                    if (callsign === w || registration === w) detectedNow.add(w);
+            const matchedFlightByWatch = {}; // 対象コード -> 該当flightオブジェクト
+            if (tooltipTargets.size > 0) {
+                flights.forEach(f => {
+                    const callsign = (f.callsign || '').toUpperCase();
+                    const registration = (f.registration || '').toUpperCase();
+                    tooltipTargets.forEach(w => {
+                        if (callsign === w || registration === w) {
+                            detectedNow.add(w);
+                            matchedFlightByWatch[w] = f;
+                        }
+                    });
                 });
-            });
+            }
+
+            // 通知・サイドバーのステータス更新は監視リスト(watchList)のみが対象。
+            // 検索ハイライトは一時的な表示なので通知やタグ表示は行わない。
             watchList.forEach(w => {
                 const wasActive = watchStatus[w];
                 const isActive = detectedNow.has(w);
@@ -381,6 +495,66 @@
                 watchStatus[w] = isActive;
             });
             renderWatchList();
+            updateWatchTooltips(matchedFlightByWatch);
+        }
+
+        function watchTooltipLabel(flight, watchValue) {
+            if (flight.registration && flight.registration !== 'N/A') return flight.registration;
+            return flight.callsign || watchValue;
+        }
+
+        // 監視中で検出されている機体のマーカーに、黒背景・白文字のtooltipを
+        // bindTooltip(permanent:true)で表示する。permanent tooltipはLeaflet側で
+        // マーカーのsetLatLng()に自動追従するため、追従用の特別な処理は不要。
+        function updateWatchTooltips(matchedFlightByWatch) {
+            const newActiveIds = new Set();
+
+            Object.keys(matchedFlightByWatch).forEach(w => {
+                const flight = matchedFlightByWatch[w];
+                const marker = flightMarkers[flight.id];
+                if (!marker) return; // 検索フィルタ等でマーカーが地図上に無い場合はスキップ
+
+                const label = watchTooltipLabel(flight, w);
+                newActiveIds.add(flight.id);
+
+                if (marker._watchTooltipLabel !== label) {
+                    if (marker.getTooltip()) {
+                        marker.setTooltipContent(label);
+                    } else {
+                        marker.bindTooltip(label, {
+                            permanent: true,
+                            direction: 'top',
+                            offset: [0, -12],
+                            className: 'watch-tooltip'
+                        }).openTooltip();
+                    }
+                    marker._watchTooltipLabel = label;
+                }
+            });
+
+            // 監視対象から外れた/ロストしたマーカーのtooltipを除去
+            watchTooltipMarkerIds.forEach(id => {
+                if (!newActiveIds.has(id)) {
+                    const marker = flightMarkers[id];
+                    if (marker && marker.getTooltip()) {
+                        marker.unbindTooltip();
+                        delete marker._watchTooltipLabel;
+                    }
+                }
+            });
+
+            watchTooltipMarkerIds = newActiveIds;
+        }
+
+        function clearAllWatchTooltips() {
+            watchTooltipMarkerIds.forEach(id => {
+                const marker = flightMarkers[id];
+                if (marker && marker.getTooltip()) {
+                    marker.unbindTooltip();
+                    delete marker._watchTooltipLabel;
+                }
+            });
+            watchTooltipMarkerIds = new Set();
         }
 
         function notify(title, body) {
@@ -526,44 +700,13 @@ async function searchByRegistration() {
 
         map.setView([flight.lat, flight.lng], 8);
 
-        const nearestRegion = findNearestRegion(flight.lat, flight.lng);
-        const regionLabel = REGION_LABELS[nearestRegion] || '不明';
-
-        alert(`${registration} を検出しました(${flight.callsign || 'コールサイン不明'})\n最寄りリージョン: ${regionLabel}`);
-    } catch (error) {
-        console.error('登録番号検索エラー:', error);
-        showError(`検索失敗: ${error.message}`);
-    }
-}function findNearestRegion(lat, lng) {
-    let nearest = null;
-    let minDist = Infinity;
-    for (const [key, r] of Object.entries(REGIONS)) {
-        const centerLat = (r.tl_y + r.br_y) / 2;
-        const centerLng = (r.tl_x + r.br_x) / 2;
-        const dist = Math.sqrt((lat - centerLat) ** 2 + (lng - centerLng) ** 2);
-        if (dist < minDist) {
-            minDist = dist;
-            nearest = key;
-        }
-    }
-    return nearest;
-}
-
-async function searchByRegistration() {
-    const input = document.getElementById('registration-search');
-    const registration = input.value.trim().toUpperCase();
-    if (!registration) return;
-
-    showError('');
-    try {
-        const response = await fetch(`${API_BASE}/search?registration=${encodeURIComponent(registration)}`);
-        if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.detail || data.error || `HTTP ${response.status}`);
-        }
-        const flight = await response.json();
-
-        map.setView([flight.lat, flight.lng], 8);
+        // 検索でヒットした機体をtooltip表示対象にする。
+        // 監視リストには入れない(サイドバーの監視タグや通知の対象外)が、
+        // checkWatchList()が次のポーリングでこの値も見てtooltipを出す。
+        // map.setView()はmoveendを発火させ、800ms後にfetchFlights()が
+        // 新しい表示範囲でこの機体を含めて取得するはずなので、
+        // 数百ms〜1秒程度でtooltipが現れる。
+        searchHighlightValue = registration;
 
         const nearestRegion = findNearestRegion(flight.lat, flight.lng);
         const regionLabel = REGION_LABELS[nearestRegion] || '不明';
