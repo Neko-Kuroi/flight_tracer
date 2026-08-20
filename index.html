@@ -139,6 +139,18 @@
             opacity: 1;
         }
 
+        /* Leafletポップアップ本体:すりガラス(グラスモーフィズム)効果 */
+        .leaflet-popup-content-wrapper {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .leaflet-popup-tip {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+        }
+
         .flight-popup {
             min-width: 260px;
         }
@@ -925,7 +937,7 @@ function buildPopupContent(flight, loading = false, photoState = null, photoDism
                 const segment = L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
                     color: altitudeToColor(segAlt),
                     weight: 3,
-                    opacity: 0.7
+                    opacity: 0.5
                 }).addTo(map);
                 segments.push(segment);
             }
